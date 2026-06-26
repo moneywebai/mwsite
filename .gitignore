@@ -1,0 +1,25 @@
+# Editor/OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Build/deps
+node_modules/
+vendor/
+
+# WordPress backups & uploads (hører ikke i kildekode)
+*.zip
+*.tar
+*.tar.gz
+*.sql
+*.bak
+
+# Logs
+*.log
+
+# Lokale overrides
+.env
+.env.local

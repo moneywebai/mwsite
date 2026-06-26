@@ -1,0 +1,14 @@
+/*
+Theme Name:  Moneyweb Base
+Theme URI:   https://moneyweb.ai
+Author:      Moneyweb
+Author URI:  https://moneyweb.ai
+Description: Parent theme — fælles fundament for Moneyweb child themes. Indeholder layout, navigation, CSS-reset og basisvariabler. Branchespecifik design leveres af child themes.
+Version:     1.0.0
+Requires at least: 6.0
+Requires PHP: 7.4
+License:     Proprietary
+License URI: https://moneyweb.ai
+Text Domain: moneyweb-base
+Tags:        moneyweb, parent
+*/

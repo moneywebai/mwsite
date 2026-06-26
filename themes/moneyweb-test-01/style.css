@@ -1,0 +1,44 @@
+/*
+Theme Name:  Moneyweb Test 01
+Theme URI:   https://moneyweb.ai
+Template:    moneyweb-base
+Author:      Moneyweb
+Author URI:  https://moneyweb.ai
+Description: Minimalt child theme til fase 1-test af moneyweb-core. Indeholder kun de templates og felter der er nødvendige for end-to-end test af manifest → ACF → API → render-flowet.
+Version:     1.0.0
+Requires at least: 6.0
+Requires PHP: 7.4
+License:     Proprietary
+Text Domain: moneyweb-test-01
+*/
+
+/* Test theme overrides — minimal tweaks. */
+:root {
+    --mw-color-primary: #1f4e8c;
+    --mw-color-accent:  #d9822b;
+}
+
+.mw-hero {
+    background: var(--mw-color-primary);
+    color: var(--mw-color-secondary);
+    padding-block: var(--mw-space-lg);
+    background-size: cover;
+    background-position: center;
+}
+.mw-hero h1 { color: inherit; }
+.mw-hero__intro { font-size: 1.125rem; }
+
+.mw-checklist {
+    list-style: none;
+    padding: 0;
+    margin: var(--mw-space-md) 0 0;
+    display: grid;
+    gap: var(--mw-space-xs);
+}
+.mw-checklist li::before {
+    content: "✓ ";
+    font-weight: 700;
+    margin-right: var(--mw-space-xs);
+}
+
+.mw-section { padding-block: var(--mw-space-lg); }

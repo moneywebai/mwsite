@@ -1,0 +1,54 @@
+{
+  "theme": "moneyweb-test-01",
+  "theme_version": "1.0.0",
+  "schema_version": 1,
+  "global": [
+    { "key": "company_name",  "type": "text",  "required": true,  "label": "Virksomhedsnavn" },
+    { "key": "company_phone", "type": "text",  "required": true,  "label": "Telefon" },
+    { "key": "company_email", "type": "text",  "required": false, "label": "E-mail" },
+    { "key": "logo_primary",  "type": "image", "required": false, "label": "Logo" }
+  ],
+  "pages": {
+    "home": {
+      "title": "Forside",
+      "slug": "forside",
+      "template": "front-page.php",
+      "is_front_page": true,
+      "label": "Forside",
+      "fields": [
+        { "key": "hero_heading", "type": "text",    "required": true,  "label": "Hero overskrift" },
+        { "key": "hero_intro",   "type": "wysiwyg", "required": false, "label": "Introduktionstekst" },
+        { "key": "hero_background_image", "type": "image", "required": false, "label": "Hero baggrundsbillede" },
+        {
+          "key": "hero_checklist",
+          "type": "repeater",
+          "required": false,
+          "label": "Checkliste",
+          "sub_fields": [
+            { "key": "text", "type": "text", "required": true, "label": "Punkt" }
+          ]
+        }
+      ]
+    },
+    "about": {
+      "title": "Om os",
+      "slug": "om-os",
+      "template": "page-about.php",
+      "label": "Om os",
+      "fields": [
+        { "key": "heading",      "type": "text",    "required": true,  "label": "Overskrift" },
+        { "key": "content_body", "type": "wysiwyg", "required": false, "label": "Indhold" }
+      ]
+    },
+    "contact": {
+      "title": "Kontakt",
+      "slug": "kontakt",
+      "template": "page-contact.php",
+      "label": "Kontakt",
+      "fields": [
+        { "key": "heading", "type": "text",    "required": true,  "label": "Overskrift" },
+        { "key": "text",    "type": "wysiwyg", "required": false, "label": "Tekst" }
+      ]
+    }
+  }
+}
