@@ -159,5 +159,50 @@ moneyweb-wp/
 |---|---|---|
 | Produktion | mw1.dk | Må ikke røres i fase 1 |
 | Test/dev | mwsite.dk | Al udvikling og test sker her |
+| Provisioning-/integrationstestsite | fase11test.mwsite.dk (blog 414) | Permanent — bruges til Multisite-isolations- og provisioning-tests |
 
 Den gamle ACF-eksport (`docs/legacy/`) bruges som reference ved eventuel fremtidig migration af eksisterende Oxygen-sites. Den blokerer ikke det nye system.
+
+---
+
+## Multisite — HTTPS og subsite-URL
+
+Hvert subsite har sit eget `siteurl` og `home` i `wp_{blog_id}_options`. WordPress `wp site create` på en HTTP-installation arver HTTP for nye sites' siteurl/home — selv når hovedsitet og resten af netværket bruger HTTPS. Det skal eksplicit rettes til HTTPS efter oprettelsen.
+
+**Regel for fase 2 og frem:**
+Alle nye Moneyweb-subsider skal have HTTPS i `siteurl` og `home` straks ved oprettelsen. Ellers genererer WP HTTP-canonical-URLs, HTTP `Link`-headers (rel=api), og blandet HTTPS/HTTP-flow i `wp-json`-resultatet.
+
+**Hvor det skal håndteres:**
+
+| Mulighed | Vurdering |
+|---|---|
+| Direkte i WP Multisite `wpmu_new_blog`-hook | Simplest. Hooket fyrer lige efter `wp site create`. Et lille filter i `moneyweb-core` der sætter `siteurl`/`home` til HTTPS-form sikrer at *alle* nye subsider får det — uanset om de oprettes via WP-CLI, admin, eller fremtidige flows. |
+| I et kommende `/provision`-endpoint | Mere kontrolleret, men dækker kun sites oprettet via det endpoint. Kræver at andre oprettelsesveje (WP admin, WP-CLI manuelt) får et separat fix. |
+
+**Anbefaling:** Læg HTTPS-normaliseringen i en `wpmu_new_blog`-hook i `moneyweb-core` — så er sikkerheden ufravigelig. `/provision`-endpointet kan stadig orkestrere temaaktivering, API-key-oprettelse og initial side-provisioning ovenpå. Implementeres ikke nu.
+
+---
+
+## Multisite — Media URL
+
+Uploads gemmes pr. subsite under den eksisterende install:
+```
+/wp-content/uploads/sites/{blog_id}/{år}/{måned}/{filnavn}
+```
+
+Den offentlige URL bruger aktuelt hovedsitets domæne:
+```
+https://mwsite.dk/wp-content/uploads/sites/{blog_id}/...
+```
+
+**Er dette normal WP Multisite-adfærd?** Ja. WordPress Multisite genererer som standard upload-URLs ud fra `WP_CONTENT_URL`, som er bundet til hoveddomænet på subdomain-installs. Subsites' egne domæner peger ikke på `/wp-content/`-stien medmindre hver subdomain har sit eget vhost med matching docroot — det er ikke tilfældet her (alle subsider serveres af samme PHP-app via wildcard DNS + delt docroot).
+
+**Teknisk grund til senere at bruge kundens subdomæne i stedet?**
+- **SEO:** Billed-URLs på kundens eget domæne giver lidt bedre image SEO og signalerer site-cohesion.
+- **CSP / mixed-host warnings:** Kundens browser ser billeder fra et andet domæne end siden — typisk ingen reel CORS/CSP-problemer, men kunne genere CSP-konfigurationer.
+- **White-label / branding:** "Powered by mwsite.dk" lækker visuelt via image-URLs.
+- **Caching/CDN:** Et per-kunde-domæne kunne lettere mappes til separat CDN-konfiguration.
+
+Modargumenter: kræver enten et `upload_dir`-filter der omskriver URL eller en serverside-reverse-proxy/regel der serverer `/wp-content/uploads/sites/{blog_id}/` fra kundens domæne. Begge løsninger er overkommelige men ikke trivielle.
+
+**Status:** Ingen ændring nu. Genovervejes hvis SEO/branding bliver et reelt issue.
