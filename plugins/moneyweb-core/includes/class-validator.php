@@ -36,13 +36,23 @@ class Moneyweb_Validator {
             ];
         }
 
-        // 2. Schema version (strict match).
-        $payload_sv  = isset( $payload['schema_version'] ) ? (int) $payload['schema_version'] : 0;
-        $expected_sv = isset( $combined['schema_version'] ) ? (int) $combined['schema_version'] : 0;
-        if ( $payload_sv !== $expected_sv ) {
+        // 2. Core API schema version (strict match).
+        $payload_csv  = isset( $payload['schema_version'] ) ? (int) $payload['schema_version'] : 0;
+        $expected_csv = isset( $combined['schema_version'] ) ? (int) $combined['schema_version'] : 0;
+        if ( $payload_csv !== $expected_csv ) {
             $errors[] = [
                 'code'    => 'schema_version_mismatch',
-                'message' => sprintf( 'Expected schema_version %d, got %d', $expected_sv, $payload_sv ),
+                'message' => sprintf( 'Expected schema_version %d, got %d', $expected_csv, $payload_csv ),
+            ];
+        }
+
+        // 3. Theme schema version (strict match).
+        $payload_tsv  = isset( $payload['theme_schema_version'] ) ? (int) $payload['theme_schema_version'] : 0;
+        $expected_tsv = isset( $combined['theme_schema_version'] ) ? (int) $combined['theme_schema_version'] : 0;
+        if ( $payload_tsv !== $expected_tsv ) {
+            $errors[] = [
+                'code'    => 'theme_schema_version_mismatch',
+                'message' => sprintf( 'Expected theme_schema_version %d, got %d', $expected_tsv, $payload_tsv ),
             ];
         }
 

@@ -31,13 +31,14 @@ Det eneste plugin i systemet (udover ACF Pro).
 
 **Gør præcis dette:**
 1. Definerer en fast liste af Core-felter (se `core-fields.md`) — sandhedskilde for fælles globale felter
-2. Finder og læser aktivt Child Theme's `moneyweb-theme.json` (theme-specifikke felter)
-3. Validerer at theme-manifestet ikke kolliderer med Core (reserved keys)
-4. Registrerer ACF-feltgrupper: `group_mw_core_global` + `group_mw_theme_global` + `group_mw_{page}`
-5. Tilbyder `GET /wp-json/moneyweb/v1/schema` — kombineret schema med `source`/`target`/`automation` på hvert felt
-6. Tilbyder `POST /wp-json/moneyweb/v1/site-data` — flat payload, router internt via `source`
-7. Validerer den modtagne JSON mod det kombinerede schema
-8. Gemmer feltværdier via ACF
+2. Eksponerer Core API-version som konstanten `MONEYWEB_SCHEMA_VERSION` (pt. 2) — uafhængig af themets schema-version
+3. Finder og læser aktivt Child Theme's `moneyweb-theme.json` (theme-specifikke felter)
+4. Validerer at theme-manifestet ikke kolliderer med Core (reserved keys) og at hvert top-level felt definerer en gyldig `automation.action`
+5. Registrerer ACF-feltgrupper: `group_mw_core_global` + `group_mw_theme_global` + `group_mw_{page}`
+6. Tilbyder `GET /wp-json/moneyweb/v1/schema` — kombineret schema med `source`/`target`/`automation` på hvert felt + dual versioning (`schema_version` + `theme_schema_version`)
+7. Tilbyder `POST /wp-json/moneyweb/v1/site-data` — flat payload, kræver begge versioner, router internt via `source`
+8. Validerer den modtagne JSON mod det kombinerede schema
+9. Gemmer feltværdier via ACF og rapporterer pr. felt: `updated` / `unchanged` / `failed`
 
 **Gør ikke:**
 - Registrerer ikke CPT'er (ingen CPT'er i fase 1)

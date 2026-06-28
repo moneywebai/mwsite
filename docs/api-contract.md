@@ -1,8 +1,14 @@
 # API Contract — moneyweb-core
 
-Version: 1.1 (fase 1.1)
+Core API version: `MONEYWEB_SCHEMA_VERSION = 2` (fase 1.1)
 Namespace: `moneyweb/v1`
 Base URL: `https://[subsite].mwsite.dk/wp-json/moneyweb/v1`
+
+**To uafhængige versionsfelter:**
+- `schema_version` — versionen af Moneyweb Core/API-kontrakten (defineret af konstanten `MONEYWEB_SCHEMA_VERSION` i pluginnet; pt. **2**)
+- `theme_schema_version` — versionen af det aktive themes `moneyweb-theme.json`'s schema (defineret som `schema_version` i theme-manifestet; pt. **1** for `moneyweb-test-01`)
+
+Begge versioner valideres strict ved POST. Manglende eller forkert version → HTTP 400 med `schema_version_mismatch` eller `theme_schema_version_mismatch`.
 
 ---
 
@@ -61,7 +67,8 @@ X-Moneyweb-Key: [api_key]
   "status": "ok",
   "theme": "moneyweb-handvaerker-01",
   "theme_version": "1.0.0",
-  "schema_version": 1,
+  "schema_version": 2,
+  "theme_schema_version": 1,
   "global": [
     {
       "key": "company_name",
@@ -150,7 +157,10 @@ Returneres når theme-manifestet bryder Core-kontrakten (reserveret key, ugyldig
 }
 ```
 
-Andre `errors[].code`-værdier: `invalid_automation_action`.
+Andre `errors[].code`-værdier i `invalid_manifest`:
+- `automation_action_missing` — et top-level felt mangler `automation.action`. Hver Core- og theme-felt skal eksplicit definere en action.
+- `invalid_automation_action` — feltets `automation.action` er ikke i den tilladte liste (`copy_from_onboarding`, `generate_text`, `find_image`, `generate_image`, `find_or_generate_image`, `select_color`, `use_default`, `manual`).
+- `reserved_field_key` — themes manifest definerer en key der er reserveret af Core.
 
 ### Response 503
 
@@ -163,6 +173,8 @@ Andre `errors[].code`-værdier: `invalid_automation_action`.
 ## POST /site-data
 
 Modtager indhold fra n8n. Strukturen er flat — ingen `core` / `theme` / `features` på top-niveau. Core router internt baseret på `source` fra schema'et.
+
+**Bemærk — fase 1.1 scope:** `/site-data` er en **fuld initial-payload-endpoint**. Den kræver at alle obligatoriske felter fra alle sider er til stede i samme request. Partielle kundeopdateringer (fx kun nyt telefonnummer) kræver en særskilt update-mode eller dedikeret endpoint — det er ikke implementeret endnu og bygges i en senere fase.
 
 ### Request
 
@@ -177,7 +189,8 @@ Content-Type: application/json
 ```json
 {
   "theme": "moneyweb-handvaerker-01",
-  "schema_version": 1,
+  "schema_version": 2,
+  "theme_schema_version": 1,
   "global": {
     "company_name":    "Hansen VVS ApS",
     "company_phone":   "12 34 56 78",
@@ -221,9 +234,13 @@ Content-Type: application/json
 ```json
 {
   "status": "ok",
-  "saved": {
-    "global": 6,
-    "pages": { "home": 4 }
+  "result": {
+    "global": { "updated": 2, "unchanged": 9, "failed": 0 },
+    "pages": {
+      "home":    { "updated": 1, "unchanged": 3, "failed": 0 },
+      "about":   { "updated": 0, "unchanged": 2, "failed": 0 },
+      "contact": { "updated": 0, "unchanged": 2, "failed": 0 }
+    }
   },
   "warnings": [
     {
@@ -236,7 +253,14 @@ Content-Type: application/json
 }
 ```
 
-`warnings` er altid til stede i response — tom array hvis ingen advarsler.
+Felter pr. scope tælles separat:
+- **`updated`** — feltet blev skrevet, og værdien adskilte sig fra den eksisterende.
+- **`unchanged`** — den nye værdi er allerede den lagrede værdi. Det er en succes, ikke en fejl. (ACF's `update_field()` returnerer `false` her — vi skelner ved at gen-læse værdien.)
+- **`failed`** — feltet kunne ikke gemmes (fx forkert format, image-sideload-fejl). Ledsages typisk af en warning.
+
+`warnings` er altid til stede i responsen — tom array hvis ingen advarsler. Et fejlende felt bliver IKKE til en top-level fejl; det fanges i `result.*.failed` og evt. en warning.
+
+**Idempotency:** Den samme payload kan genkøres trygt — andet kald returnerer typisk `unchanged` for alle felter, og opretter ingen dubletter af sider.
 
 ### Response 400 — Valideringsfejl
 
@@ -246,7 +270,8 @@ Content-Type: application/json
   "code": "validation_failed",
   "errors": [
     { "code": "theme_mismatch", "message": "Payload theme '…' does not match active theme '…'" },
-    { "code": "schema_version_mismatch", "message": "Expected schema_version 1, got 2" },
+    { "code": "schema_version_mismatch", "message": "Expected schema_version 2, got 999" },
+    { "code": "theme_schema_version_mismatch", "message": "Expected theme_schema_version 1, got 999" },
     { "code": "required_field_missing", "field": "company_name", "scope": "global", "source": "core", "message": "Required field missing" }
   ]
 }
@@ -274,11 +299,12 @@ Samme respons som `GET /schema` returnerer (hentes via samme `build_combined()`)
 
 1. ACF Pro aktiv
 2. API-key
-3. Theme-manifest gyldigt (ikke reserved-key collision, gyldige automation actions)
+3. Theme-manifest gyldigt (ikke reserved-key collision, gyldige + tilstedeværende automation actions)
 4. `theme` matcher aktivt Child Theme
-5. `schema_version` matcher manifest (strict)
-6. Alle `required: true` felter (Core + theme) til stede
-7. Ukendte felter samles i `warnings` og springes over — ingen fejl
+5. `schema_version` (Core API) matcher `MONEYWEB_SCHEMA_VERSION` (strict)
+6. `theme_schema_version` matcher manifest (strict)
+7. Alle `required: true` felter (Core + theme) til stede
+8. Ukendte felter samles i `warnings` og springes over — ingen fejl
 
 ---
 

@@ -2,14 +2,17 @@
 /**
  * POST /moneyweb/v1/site-data
  *
- * - Builds combined Core+theme schema
- * - Validates payload against it
+ * Phase 1.1 / 1.1-fix:
+ * - Validates payload against combined Core+theme schema
+ * - Requires both schema_version (Core API) and theme_schema_version (theme)
  * - Resolves or creates WordPress pages
- * - Sets _wp_page_template (except front-page)
- * - Sets show_on_front/page_on_front for is_front_page pages
+ * - Sets _wp_page_template (except front-page) and show_on_front/page_on_front
  * - Sideloads image URLs to media library and stores attachment IDs
- * - Saves field values via update_field(), routing globals to the correct
- *   ACF field key based on `source` (core vs theme)
+ * - store_value() reports `updated` / `unchanged` / `failed` per field; an
+ *   ACF "value already identical" outcome is `unchanged`, NOT `failed`.
+ *
+ * This endpoint is the full initial-payload writer for a new site. Partial
+ * customer edits are out of scope until a dedicated update-mode is built.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -33,18 +36,18 @@ class Moneyweb_Site_Data {
             ], 400 );
         }
 
-        $result = Moneyweb_Validator::validate( $payload, $combined );
-        if ( ! empty( $result['errors'] ) ) {
+        $validation = Moneyweb_Validator::validate( $payload, $combined );
+        if ( ! empty( $validation['errors'] ) ) {
             return new WP_REST_Response( [
                 'status' => 'error',
                 'code'   => 'validation_failed',
-                'errors' => $result['errors'],
+                'errors' => $validation['errors'],
             ], 400 );
         }
 
-        $warnings = $result['warnings'];
-        $saved    = [
-            'global' => 0,
+        $warnings = $validation['warnings'];
+        $result   = [
+            'global' => [ 'updated' => 0, 'unchanged' => 0, 'failed' => 0 ],
             'pages'  => [],
         ];
 
@@ -66,10 +69,8 @@ class Moneyweb_Site_Data {
             }
             $f         = $global_defs[ $key ];
             $field_key = self::global_field_key( $f );
-            $stored    = self::store_value( $field_key, $value, $f, 'option', $warnings );
-            if ( $stored ) {
-                $saved['global']++;
-            }
+            $status    = self::store_value( $field_key, $value, $f, 'option', $warnings );
+            self::tally( $result['global'], $status );
         }
 
         // Save pages.
@@ -101,7 +102,7 @@ class Moneyweb_Site_Data {
             }
             self::apply_page_settings( $page_id, $page_key, $page_def );
 
-            $page_saved    = 0;
+            $page_result   = [ 'updated' => 0, 'unchanged' => 0, 'failed' => 0 ];
             $safe_page_key = Moneyweb_ACF_Builder::sanitize_key( $page_key );
             foreach ( (array) $values as $field_key_in => $value ) {
                 if ( ! isset( $field_defs[ $field_key_in ] ) ) {
@@ -109,19 +110,25 @@ class Moneyweb_Site_Data {
                 }
                 $f         = $field_defs[ $field_key_in ];
                 $field_key = 'field_mw_' . $safe_page_key . '_' . Moneyweb_ACF_Builder::sanitize_key( $field_key_in );
-                $stored    = self::store_value( $field_key, $value, $f, $page_id, $warnings );
-                if ( $stored ) {
-                    $page_saved++;
-                }
+                $status    = self::store_value( $field_key, $value, $f, $page_id, $warnings );
+                self::tally( $page_result, $status );
             }
-            $saved['pages'][ $page_key ] = $page_saved;
+            $result['pages'][ $page_key ] = $page_result;
         }
 
         return new WP_REST_Response( [
             'status'   => 'ok',
-            'saved'    => $saved,
+            'result'   => $result,
             'warnings' => array_values( $warnings ),
         ], 200 );
+    }
+
+    private static function tally( &$bucket, $status ) {
+        if ( isset( $bucket[ $status ] ) ) {
+            $bucket[ $status ]++;
+        } else {
+            $bucket['failed']++;
+        }
     }
 
     /**
@@ -137,7 +144,7 @@ class Moneyweb_Site_Data {
     }
 
     /**
-     * Resolve or create the WordPress page.
+     * Resolve or create the WordPress page (idempotent via _moneyweb_page_key).
      */
     private static function resolve_or_create_page( $page_key, $page_def ) {
         $query = new WP_Query( [
@@ -200,56 +207,59 @@ class Moneyweb_Site_Data {
 
     /**
      * Sanitize + persist a single field value.
+     *
+     * Returns one of: 'updated', 'unchanged', 'failed'.
+     * `failed` means the value could not be stored; `unchanged` means it was
+     * already correct in ACF — both leave the site in a consistent state.
      */
     private static function store_value( $field_key, $value, $field_def, $target, &$warnings ) {
         if ( ! function_exists( 'update_field' ) ) {
-            return false;
+            return 'failed';
         }
-        $type = isset( $field_def['type'] ) ? $field_def['type'] : 'text';
+        $type       = isset( $field_def['type'] ) ? $field_def['type'] : 'text';
+        $field_name = Moneyweb_ACF_Builder::sanitize_key( isset( $field_def['key'] ) ? $field_def['key'] : '' );
 
+        // Step 1: prepare the value or fail fast.
         switch ( $type ) {
             case 'text':
-                $clean = is_scalar( $value ) ? sanitize_text_field( (string) $value ) : '';
-                return (bool) update_field( $field_key, $clean, $target );
-
+                $new = is_scalar( $value ) ? sanitize_text_field( (string) $value ) : '';
+                break;
             case 'wysiwyg':
-                $clean = is_scalar( $value ) ? wp_kses_post( (string) $value ) : '';
-                return (bool) update_field( $field_key, $clean, $target );
-
+                $new = is_scalar( $value ) ? wp_kses_post( (string) $value ) : '';
+                break;
             case 'number':
-                if ( is_numeric( $value ) ) {
-                    return (bool) update_field( $field_key, 0 + $value, $target );
+                if ( ! is_numeric( $value ) ) {
+                    return 'failed';
                 }
-                return false;
-
+                $new = 0 + $value;
+                break;
             case 'true_false':
-                return (bool) update_field( $field_key, (bool) $value ? 1 : 0, $target );
-
+                $new = (bool) $value ? 1 : 0;
+                break;
             case 'color':
-                $clean = self::sanitize_color( $value );
-                if ( '' === $clean ) {
-                    return false;
+                $new = self::sanitize_color( $value );
+                if ( '' === $new ) {
+                    return 'failed';
                 }
-                return (bool) update_field( $field_key, $clean, $target );
-
+                break;
             case 'image':
                 if ( ! is_string( $value ) || '' === trim( $value ) ) {
-                    return false;
+                    return 'failed';
                 }
-                $attachment_id = self::sideload_image( $value );
-                if ( is_wp_error( $attachment_id ) ) {
+                $att = self::sideload_image( $value );
+                if ( is_wp_error( $att ) ) {
                     $warnings[] = [
                         'code'    => 'image_sideload_failed',
                         'field'   => isset( $field_def['key'] ) ? $field_def['key'] : '',
-                        'message' => $attachment_id->get_error_message(),
+                        'message' => $att->get_error_message(),
                     ];
-                    return false;
+                    return 'failed';
                 }
-                return (bool) update_field( $field_key, (int) $attachment_id, $target );
-
+                $new = (int) $att;
+                break;
             case 'repeater':
                 if ( ! is_array( $value ) ) {
-                    return false;
+                    return 'failed';
                 }
                 $sub_defs = [];
                 if ( ! empty( $field_def['sub_fields'] ) && is_array( $field_def['sub_fields'] ) ) {
@@ -277,16 +287,75 @@ class Moneyweb_Site_Data {
                         $rows[] = $clean_row;
                     }
                 }
-                return (bool) update_field( $field_key, $rows, $target );
-
+                $new = $rows;
+                break;
             default:
                 $warnings[] = [
                     'code'    => 'unsupported_type',
                     'field'   => isset( $field_def['key'] ) ? $field_def['key'] : '',
                     'message' => sprintf( 'Unsupported field type "%s" — skipped', (string) $type ),
                 ];
-                return false;
+                return 'failed';
         }
+
+        // Step 2: pre-check unchanged for cheap scalar types.
+        if ( '' !== $field_name && ! in_array( $type, [ 'image', 'repeater' ], true ) ) {
+            $current = get_field( $field_name, $target );
+            if ( self::scalar_equivalent( $current, $new, $type ) ) {
+                return 'unchanged';
+            }
+        }
+
+        // Step 3: persist.
+        $ok = update_field( $field_key, $new, $target );
+        if ( $ok ) {
+            return 'updated';
+        }
+
+        // update_field returned falsy — distinguish unchanged from failed by re-reading.
+        if ( '' === $field_name ) {
+            return 'failed';
+        }
+        $after = get_field( $field_name, $target );
+
+        if ( 'image' === $type ) {
+            if ( (int) $after === (int) $new ) {
+                return 'unchanged';
+            }
+            return 'failed';
+        }
+
+        if ( 'repeater' === $type ) {
+            $intended = count( $new );
+            $got      = is_array( $after ) ? count( $after ) : 0;
+            if ( 0 === $intended && 0 === $got ) {
+                return 'unchanged';
+            }
+            if ( $intended > 0 && $got === $intended ) {
+                return 'unchanged';
+            }
+            return 'failed';
+        }
+
+        if ( self::scalar_equivalent( $after, $new, $type ) ) {
+            return 'updated';
+        }
+        return 'failed';
+    }
+
+    private static function scalar_equivalent( $a, $b, $type ) {
+        if ( 'number' === $type ) {
+            return (float) $a === (float) $b;
+        }
+        if ( 'true_false' === $type ) {
+            return (bool) $a === (bool) $b;
+        }
+        // text and wysiwyg: ACF may append a trailing newline to wysiwyg on storage,
+        // so compare after rtrim of whitespace on both sides.
+        if ( 'text' === $type || 'wysiwyg' === $type ) {
+            return rtrim( (string) $a ) === rtrim( (string) $b );
+        }
+        return (string) $a === (string) $b;
     }
 
     private static function clean_sub_value( $value, $sub_def, &$warnings ) {

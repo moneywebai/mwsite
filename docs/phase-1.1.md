@@ -2,6 +2,12 @@
 
 Bygger oven på `phase-1.md` (historisk arkiv). Indfører faste Core-felter, automation-metadata, `target`/`source` på hvert schemafelt, reserved-key collision check og struktureret `opening_hours`.
 
+**Korrektioner (post-1.1-commit):**
+- Dual versioning: `MONEYWEB_SCHEMA_VERSION = 2` (Core) + `theme_schema_version` (theme). Begge valideres strict på POST.
+- `automation.action` er nu obligatorisk på alle top-level felter — `automation_action_missing` HTTP 422.
+- POST-response erstatter `saved: {global: N, pages: {…: N}}` med `result: {global: {updated, unchanged, failed}, pages: {…: {updated, unchanged, failed}}}` — `update_field()`'s "uændret"-tilfælde rapporteres ikke længere som 0/fejl.
+- POST er en **fuld initial-payload-endpoint**: alle obligatoriske felter fra alle sider skal være til stede i samme request. Partielle kundeopdateringer kræver en særskilt update-mode/endpoint, som ikke er implementeret i denne fase.
+
 ---
 
 ## Hvad er nyt

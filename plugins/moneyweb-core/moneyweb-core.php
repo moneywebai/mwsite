@@ -17,6 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 define( 'MONEYWEB_CORE_VERSION', '1.0.0' );
+define( 'MONEYWEB_SCHEMA_VERSION', 2 );
 define( 'MONEYWEB_CORE_FILE', __FILE__ );
 define( 'MONEYWEB_CORE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'MONEYWEB_CORE_NAMESPACE', 'moneyweb/v1' );

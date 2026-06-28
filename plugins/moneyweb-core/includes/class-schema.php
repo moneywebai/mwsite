@@ -66,14 +66,24 @@ class Moneyweb_Schema {
             }
         }
 
-        // 2. Invalid automation actions anywhere.
-        foreach ( self::iterate_all_fields( $manifest ) as $f ) {
-            if ( ! empty( $f['automation']['action'] )
-                && ! Moneyweb_Core_Fields::is_valid_automation_action( $f['automation']['action'] ) ) {
+        // 2. Every top-level field MUST declare automation.action.
+        //    Sub_fields (repeater rows) are exempt — their meaning derives
+        //    from the parent's automation.
+        foreach ( self::iterate_top_level_fields( $manifest ) as $f ) {
+            $action = isset( $f['automation']['action'] ) ? (string) $f['automation']['action'] : '';
+            if ( '' === $action ) {
+                $errors[] = [
+                    'code'    => 'automation_action_missing',
+                    'field'   => isset( $f['key'] ) ? (string) $f['key'] : '',
+                    'message' => 'Every schema field must define automation.action.',
+                ];
+                continue;
+            }
+            if ( ! Moneyweb_Core_Fields::is_valid_automation_action( $action ) ) {
                 $errors[] = [
                     'code'    => 'invalid_automation_action',
                     'field'   => isset( $f['key'] ) ? (string) $f['key'] : '',
-                    'message' => sprintf( 'Unknown automation.action "%s"', (string) $f['automation']['action'] ),
+                    'message' => sprintf( 'Unknown automation.action "%s"', $action ),
                 ];
             }
         }
@@ -133,12 +143,13 @@ class Moneyweb_Schema {
         }
 
         return [
-            'status'         => 'ok',
-            'theme'          => (string) $manifest['theme'],
-            'theme_version'  => (string) $manifest['theme_version'],
-            'schema_version' => (int) $manifest['schema_version'],
-            'global'         => $global,
-            'pages'          => $pages,
+            'status'               => 'ok',
+            'theme'                => (string) $manifest['theme'],
+            'theme_version'        => (string) $manifest['theme_version'],
+            'schema_version'       => (int) MONEYWEB_SCHEMA_VERSION,
+            'theme_schema_version' => (int) $manifest['schema_version'],
+            'global'               => $global,
+            'pages'                => $pages,
         ];
     }
 
@@ -173,24 +184,17 @@ class Moneyweb_Schema {
     }
 
     /**
-     * Yields every field definition (core + theme global + page fields + sub_fields)
-     * for cross-cutting validation.
+     * Returns every top-level field definition (Core + theme.global + theme.pages.*.fields).
+     * Sub_fields are NOT included — their semantics derive from the parent's automation.
      */
-    private static function iterate_all_fields( $manifest ) {
+    private static function iterate_top_level_fields( $manifest ) {
         $out = [];
-        // Core (validated for safety, although Core is trusted source).
         foreach ( Moneyweb_Core_Fields::get_fields() as $f ) {
             $out[] = $f;
-            if ( ! empty( $f['sub_fields'] ) && is_array( $f['sub_fields'] ) ) {
-                foreach ( $f['sub_fields'] as $sf ) { $out[] = $sf; }
-            }
         }
         if ( ! empty( $manifest['global'] ) && is_array( $manifest['global'] ) ) {
             foreach ( $manifest['global'] as $f ) {
                 $out[] = $f;
-                if ( ! empty( $f['sub_fields'] ) && is_array( $f['sub_fields'] ) ) {
-                    foreach ( $f['sub_fields'] as $sf ) { $out[] = $sf; }
-                }
             }
         }
         if ( ! empty( $manifest['pages'] ) && is_array( $manifest['pages'] ) ) {
@@ -200,9 +204,6 @@ class Moneyweb_Schema {
                 }
                 foreach ( $page['fields'] as $f ) {
                     $out[] = $f;
-                    if ( ! empty( $f['sub_fields'] ) && is_array( $f['sub_fields'] ) ) {
-                        foreach ( $f['sub_fields'] as $sf ) { $out[] = $sf; }
-                    }
                 }
             }
         }

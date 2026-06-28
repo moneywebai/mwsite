@@ -141,7 +141,12 @@ Hvert felt kan have et `automation`-objekt der fortæller n8n hvad den skal gør
 | `use_default` | Brug `default`-værdi direkte | (læs `default` på feltet) |
 | `manual` | Kræver manuelt input — n8n skal ikke fylde feltet | — |
 
-Ugyldig `automation.action` får `/schema` til at returnere HTTP 422 `invalid_automation_action`.
+**`automation.action` er obligatorisk** på alle top-level felter (Core globals, theme globals, alle page-felter). Repeater-sub_fields er undtaget, fordi de beskriver strukturen for resultatet af parent-feltets automation.
+
+| Fejl | HTTP | Code |
+|---|---|---|
+| Felt mangler `automation` eller `automation.action` | 422 | `automation_action_missing` |
+| `automation.action` er ikke i tilladt liste | 422 | `invalid_automation_action` |
 
 ---
 
@@ -167,7 +172,9 @@ Ugyldig `automation.action` får `/schema` til at returnere HTTP 422 `invalid_au
 | Omdøb et felt | +1 |
 | Ændr felttype | +1 |
 
-Strict match håndhæves: payload's `schema_version` skal være lig med manifestets.
+Strict match håndhæves: payload's `theme_schema_version` skal være lig med manifestets `schema_version`.
+
+**Bemærk navngivning:** Manifestet bruger feltet `schema_version` for at beskrive themets schema-version. I API'et (`/schema` og `/site-data`) eksponeres den samme værdi som `theme_schema_version` for at adskille den fra `schema_version`, som er Moneyweb Core/API-kontraktens version (konstanten `MONEYWEB_SCHEMA_VERSION`, pt. 2).
 
 ---
 
