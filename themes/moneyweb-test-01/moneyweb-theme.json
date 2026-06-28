@@ -3,10 +3,17 @@
   "theme_version": "1.0.0",
   "schema_version": 1,
   "global": [
-    { "key": "company_name",  "type": "text",  "required": true,  "label": "Virksomhedsnavn" },
-    { "key": "company_phone", "type": "text",  "required": true,  "label": "Telefon" },
-    { "key": "company_email", "type": "text",  "required": false, "label": "E-mail" },
-    { "key": "logo_primary",  "type": "image", "required": false, "label": "Logo" }
+    {
+      "key": "primary_color",
+      "type": "color",
+      "required": false,
+      "label": "Primær farve",
+      "customer_editable": true,
+      "automation": {
+        "action": "select_color",
+        "instruction": "Vælg en professionel farve, der passer til virksomhedens logo og branche."
+      }
+    }
   ],
   "pages": {
     "home": {
@@ -16,17 +23,64 @@
       "is_front_page": true,
       "label": "Forside",
       "fields": [
-        { "key": "hero_heading", "type": "text",    "required": true,  "label": "Hero overskrift" },
-        { "key": "hero_intro",   "type": "wysiwyg", "required": false, "label": "Introduktionstekst" },
-        { "key": "hero_background_image", "type": "image", "required": false, "label": "Hero baggrundsbillede" },
+        {
+          "key": "hero_heading",
+          "type": "text",
+          "required": true,
+          "label": "Hero overskrift",
+          "customer_editable": true,
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Skriv en kort overskrift, som forklarer virksomhedens vigtigste fordel.",
+            "max_characters": 65,
+            "format": "plain_text"
+          }
+        },
+        {
+          "key": "hero_intro",
+          "type": "wysiwyg",
+          "required": false,
+          "label": "Introduktionstekst",
+          "customer_editable": true,
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Skriv 2-3 sætninger der introducerer virksomheden og dens hovedydelser.",
+            "max_characters": 320,
+            "format": "html"
+          }
+        },
+        {
+          "key": "hero_background_image",
+          "type": "image",
+          "required": false,
+          "label": "Hero baggrundsbillede",
+          "customer_editable": true,
+          "automation": {
+            "action": "find_or_generate_image",
+            "instruction": "Et realistisk billede der repræsenterer virksomhedens primære arbejde. Ingen tekst eller vandmærker.",
+            "orientation": "landscape",
+            "minimum_width": 1600,
+            "minimum_height": 900,
+            "avoid": [
+              "tekst i billedet",
+              "vandmærker",
+              "tydeligt kunstigt AI-look"
+            ]
+          }
+        },
         {
           "key": "hero_checklist",
           "type": "repeater",
           "required": false,
           "label": "Checkliste",
+          "customer_editable": true,
           "sub_fields": [
             { "key": "text", "type": "text", "required": true, "label": "Punkt" }
-          ]
+          ],
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Generér 3-5 korte checklist-punkter med virksomhedens vigtigste salgspointer."
+          }
         }
       ]
     },
@@ -36,8 +90,31 @@
       "template": "page-about.php",
       "label": "Om os",
       "fields": [
-        { "key": "heading",      "type": "text",    "required": true,  "label": "Overskrift" },
-        { "key": "content_body", "type": "wysiwyg", "required": false, "label": "Indhold" }
+        {
+          "key": "heading",
+          "type": "text",
+          "required": true,
+          "label": "Overskrift",
+          "customer_editable": true,
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Kort overskrift til Om os-siden.",
+            "max_characters": 60,
+            "format": "plain_text"
+          }
+        },
+        {
+          "key": "content_body",
+          "type": "wysiwyg",
+          "required": false,
+          "label": "Indhold",
+          "customer_editable": true,
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Skriv en kort virksomhedsbeskrivelse på 3-5 sætninger.",
+            "format": "html"
+          }
+        }
       ]
     },
     "contact": {
@@ -46,8 +123,29 @@
       "template": "page-contact.php",
       "label": "Kontakt",
       "fields": [
-        { "key": "heading", "type": "text",    "required": true,  "label": "Overskrift" },
-        { "key": "text",    "type": "wysiwyg", "required": false, "label": "Tekst" }
+        {
+          "key": "heading",
+          "type": "text",
+          "required": true,
+          "label": "Overskrift",
+          "customer_editable": true,
+          "automation": {
+            "action": "use_default",
+            "default": "Kontakt os"
+          }
+        },
+        {
+          "key": "text",
+          "type": "wysiwyg",
+          "required": false,
+          "label": "Tekst",
+          "customer_editable": true,
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Kort tekst der opfordrer kunden til at tage kontakt.",
+            "format": "html"
+          }
+        }
       ]
     }
   }

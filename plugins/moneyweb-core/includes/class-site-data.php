@@ -2,12 +2,14 @@
 /**
  * POST /moneyweb/v1/site-data
  *
- * - Validates payload against manifest
+ * - Builds combined Core+theme schema
+ * - Validates payload against it
  * - Resolves or creates WordPress pages
  * - Sets _wp_page_template (except front-page)
  * - Sets show_on_front/page_on_front for is_front_page pages
  * - Sideloads image URLs to media library and stores attachment IDs
- * - Saves field values via update_field()
+ * - Saves field values via update_field(), routing globals to the correct
+ *   ACF field key based on `source` (core vs theme)
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -17,15 +19,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Moneyweb_Site_Data {
 
     public static function handle( WP_REST_Request $request ) {
-        $manifest = Moneyweb_Manifest::get();
-        if ( is_wp_error( $manifest ) ) {
-            $data = $manifest->get_error_data();
-            $code = isset( $data['status'] ) ? (int) $data['status'] : 500;
-            return new WP_REST_Response( [
-                'status'  => 'error',
-                'code'    => $manifest->get_error_code(),
-                'message' => $manifest->get_error_message(),
-            ], $code );
+        $combined = Moneyweb_Schema::build_combined();
+        if ( is_wp_error( $combined ) ) {
+            return Moneyweb_Schema::wp_error_to_response( $combined );
         }
 
         $payload = $request->get_json_params();
@@ -37,7 +33,7 @@ class Moneyweb_Site_Data {
             ], 400 );
         }
 
-        $result = Moneyweb_Validator::validate( $payload, $manifest );
+        $result = Moneyweb_Validator::validate( $payload, $combined );
         if ( ! empty( $result['errors'] ) ) {
             return new WP_REST_Response( [
                 'status' => 'error',
@@ -52,18 +48,25 @@ class Moneyweb_Site_Data {
             'pages'  => [],
         ];
 
+        // Index globals by key so we can quickly route.
+        $global_defs = [];
+        foreach ( $combined['global'] as $f ) {
+            if ( ! empty( $f['key'] ) ) {
+                $global_defs[ $f['key'] ] = $f;
+            }
+        }
+
         // Save globals.
-        $manifest_global = self::index_by_key( $manifest['global'] );
-        $global_payload  = isset( $payload['global'] ) && is_array( $payload['global'] )
+        $global_payload = isset( $payload['global'] ) && is_array( $payload['global'] )
             ? $payload['global']
             : [];
         foreach ( $global_payload as $key => $value ) {
-            if ( ! isset( $manifest_global[ $key ] ) ) {
+            if ( ! isset( $global_defs[ $key ] ) ) {
                 continue; // already in warnings
             }
-            $field_def = $manifest_global[ $key ];
-            $field_key = 'field_mw_global_' . Moneyweb_ACF_Builder::sanitize_key( $key );
-            $stored    = self::store_value( $field_key, $value, $field_def, 'option', $warnings );
+            $f         = $global_defs[ $key ];
+            $field_key = self::global_field_key( $f );
+            $stored    = self::store_value( $field_key, $value, $f, 'option', $warnings );
             if ( $stored ) {
                 $saved['global']++;
             }
@@ -74,11 +77,18 @@ class Moneyweb_Site_Data {
             ? $payload['pages']
             : [];
         foreach ( $pages_payload as $page_key => $values ) {
-            if ( ! isset( $manifest['pages'][ $page_key ] ) ) {
+            if ( ! isset( $combined['pages'][ $page_key ] ) ) {
                 continue; // already in warnings
             }
-            $page_def    = $manifest['pages'][ $page_key ];
-            $manifest_fields = self::index_by_key( $page_def['fields'] ?? [] );
+            $page_def = $combined['pages'][ $page_key ];
+            $field_defs = [];
+            if ( ! empty( $page_def['fields'] ) && is_array( $page_def['fields'] ) ) {
+                foreach ( $page_def['fields'] as $f ) {
+                    if ( ! empty( $f['key'] ) ) {
+                        $field_defs[ $f['key'] ] = $f;
+                    }
+                }
+            }
 
             $page_id = self::resolve_or_create_page( $page_key, $page_def );
             if ( is_wp_error( $page_id ) ) {
@@ -91,15 +101,15 @@ class Moneyweb_Site_Data {
             }
             self::apply_page_settings( $page_id, $page_key, $page_def );
 
-            $page_saved = 0;
+            $page_saved    = 0;
             $safe_page_key = Moneyweb_ACF_Builder::sanitize_key( $page_key );
             foreach ( (array) $values as $field_key_in => $value ) {
-                if ( ! isset( $manifest_fields[ $field_key_in ] ) ) {
+                if ( ! isset( $field_defs[ $field_key_in ] ) ) {
                     continue; // already in warnings
                 }
-                $field_def  = $manifest_fields[ $field_key_in ];
-                $field_key  = 'field_mw_' . $safe_page_key . '_' . Moneyweb_ACF_Builder::sanitize_key( $field_key_in );
-                $stored     = self::store_value( $field_key, $value, $field_def, $page_id, $warnings );
+                $f         = $field_defs[ $field_key_in ];
+                $field_key = 'field_mw_' . $safe_page_key . '_' . Moneyweb_ACF_Builder::sanitize_key( $field_key_in );
+                $stored    = self::store_value( $field_key, $value, $f, $page_id, $warnings );
                 if ( $stored ) {
                     $page_saved++;
                 }
@@ -115,12 +125,21 @@ class Moneyweb_Site_Data {
     }
 
     /**
+     * Returns the correct ACF field key for a global field, based on `source`.
+     */
+    private static function global_field_key( $f ) {
+        $source = isset( $f['source'] ) ? (string) $f['source'] : 'theme';
+        $key    = Moneyweb_ACF_Builder::sanitize_key( $f['key'] );
+        if ( 'core' === $source ) {
+            return 'field_mw_core_' . $key;
+        }
+        return 'field_mw_theme_global_' . $key;
+    }
+
+    /**
      * Resolve or create the WordPress page.
-     *
-     * @return int|WP_Error  page ID or error
      */
     private static function resolve_or_create_page( $page_key, $page_def ) {
-        // 1. By _moneyweb_page_key meta.
         $query = new WP_Query( [
             'post_type'              => 'page',
             'post_status'            => [ 'publish', 'draft', 'private', 'pending' ],
@@ -139,7 +158,6 @@ class Moneyweb_Site_Data {
             return (int) $query->posts[0];
         }
 
-        // 2. By slug.
         $slug = isset( $page_def['slug'] ) ? sanitize_title( $page_def['slug'] ) : '';
         if ( '' !== $slug ) {
             $existing = get_page_by_path( $slug, OBJECT, 'page' );
@@ -148,7 +166,6 @@ class Moneyweb_Site_Data {
             }
         }
 
-        // 3. Create.
         $title = isset( $page_def['title'] ) ? (string) $page_def['title'] : ucfirst( $page_key );
         $args  = [
             'post_type'    => 'page',
@@ -166,15 +183,11 @@ class Moneyweb_Site_Data {
         return (int) $new_id;
     }
 
-    /**
-     * Sets page template + meta key + front-page settings.
-     */
     private static function apply_page_settings( $page_id, $page_key, $page_def ) {
         update_post_meta( $page_id, MONEYWEB_CORE_PAGE_META_KEY, $page_key );
 
         $is_front = ! empty( $page_def['is_front_page'] );
         if ( $is_front ) {
-            // Do NOT set _wp_page_template for front page; let WP pick front-page.php automatically.
             update_option( 'show_on_front', 'page' );
             update_option( 'page_on_front', (int) $page_id );
         } else {
@@ -187,13 +200,6 @@ class Moneyweb_Site_Data {
 
     /**
      * Sanitize + persist a single field value.
-     *
-     * @param string                 $field_key  ACF field key
-     * @param mixed                  $value
-     * @param array                  $field_def  Manifest definition
-     * @param int|string             $target     Post ID, 'option', or other ACF target
-     * @param array                  &$warnings
-     * @return bool                  true if stored
      */
     private static function store_value( $field_key, $value, $field_def, $target, &$warnings ) {
         if ( ! function_exists( 'update_field' ) ) {
@@ -218,6 +224,13 @@ class Moneyweb_Site_Data {
 
             case 'true_false':
                 return (bool) update_field( $field_key, (bool) $value ? 1 : 0, $target );
+
+            case 'color':
+                $clean = self::sanitize_color( $value );
+                if ( '' === $clean ) {
+                    return false;
+                }
+                return (bool) update_field( $field_key, $clean, $target );
 
             case 'image':
                 if ( ! is_string( $value ) || '' === trim( $value ) ) {
@@ -256,7 +269,7 @@ class Moneyweb_Site_Data {
                         if ( ! isset( $sub_defs[ $sub_key ] ) ) {
                             continue;
                         }
-                        $sub_def     = $sub_defs[ $sub_key ];
+                        $sub_def       = $sub_defs[ $sub_key ];
                         $sub_field_key = $field_key . '_' . Moneyweb_ACF_Builder::sanitize_key( $sub_key );
                         $clean_row[ $sub_field_key ] = self::clean_sub_value( $sub_val, $sub_def, $warnings );
                     }
@@ -287,6 +300,8 @@ class Moneyweb_Site_Data {
                 return is_numeric( $value ) ? 0 + $value : 0;
             case 'true_false':
                 return (bool) $value ? 1 : 0;
+            case 'color':
+                return self::sanitize_color( $value );
             case 'image':
                 if ( ! is_string( $value ) || '' === trim( $value ) ) {
                     return 0;
@@ -307,10 +322,21 @@ class Moneyweb_Site_Data {
     }
 
     /**
+     * Returns a clean #rrggbb / #rrggbbaa string or empty string.
+     */
+    private static function sanitize_color( $value ) {
+        if ( ! is_string( $value ) ) {
+            return '';
+        }
+        $value = trim( $value );
+        if ( preg_match( '/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/', $value ) ) {
+            return strtolower( $value );
+        }
+        return '';
+    }
+
+    /**
      * Sideload an image URL to media library, return attachment ID.
-     *
-     * @param string $url
-     * @return int|WP_Error
      */
     private static function sideload_image( $url ) {
         $url = esc_url_raw( trim( $url ) );
@@ -327,18 +353,5 @@ class Moneyweb_Site_Data {
             return $attachment_id;
         }
         return (int) $attachment_id;
-    }
-
-    private static function index_by_key( $fields ) {
-        $out = [];
-        if ( ! is_array( $fields ) ) {
-            return $out;
-        }
-        foreach ( $fields as $f ) {
-            if ( is_array( $f ) && ! empty( $f['key'] ) ) {
-                $out[ $f['key'] ] = $f;
-            }
-        }
-        return $out;
     }
 }

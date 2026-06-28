@@ -1,6 +1,6 @@
 # API Contract — moneyweb-core
 
-Version: 1.0
+Version: 1.1 (fase 1.1)
 Namespace: `moneyweb/v1`
 Base URL: `https://[subsite].mwsite.dk/wp-json/moneyweb/v1`
 
@@ -34,28 +34,18 @@ Forkert eller manglende key returnerer `401`.
 
 ## REST-registrering
 
-Alle routes registreres på `rest_api_init` og har `permission_callback` der validerer API-key:
+Routes registreres på `rest_api_init` med `permission_callback` der validerer API-key:
 
 ```php
-add_action('rest_api_init', function() {
-    register_rest_route('moneyweb/v1', '/schema', [
-        'methods'             => 'GET',
-        'callback'            => [Moneyweb_Schema::class, 'handle'],
-        'permission_callback' => [Moneyweb_Auth::class, 'check'],
-    ]);
-    register_rest_route('moneyweb/v1', '/site-data', [
-        'methods'             => 'POST',
-        'callback'            => [Moneyweb_Site_Data::class, 'handle'],
-        'permission_callback' => [Moneyweb_Auth::class, 'check'],
-    ]);
-});
+register_rest_route('moneyweb/v1', '/schema',    [ 'methods' => 'GET',  ... ]);
+register_rest_route('moneyweb/v1', '/site-data', [ 'methods' => 'POST', ... ]);
 ```
 
 ---
 
 ## GET /schema
 
-Returnerer det aktive Child Theme's feltskema til n8n.
+Returnerer den **kombinerede arbejdsordre** for n8n: Core-felter + det aktive Child Theme's felter, hver annoteret med `source`, `target` og evt. `automation`.
 
 ### Request
 
@@ -73,28 +63,55 @@ X-Moneyweb-Key: [api_key]
   "theme_version": "1.0.0",
   "schema_version": 1,
   "global": [
-    { "key": "company_name",  "type": "text",  "required": true,  "label": "Virksomhedsnavn" },
-    { "key": "company_phone", "type": "text",  "required": true,  "label": "Telefon" },
-    { "key": "company_email", "type": "text",  "required": true,  "label": "E-mail" },
-    { "key": "logo_primary",  "type": "image", "required": false, "label": "Logo" }
+    {
+      "key": "company_name",
+      "target": "global.company_name",
+      "source": "core",
+      "type": "text",
+      "required": true,
+      "label": "Virksomhedsnavn",
+      "customer_editable": true,
+      "automation": {
+        "action": "copy_from_onboarding",
+        "onboarding_key": "company_name"
+      }
+    },
+    {
+      "key": "primary_color",
+      "target": "global.primary_color",
+      "source": "theme",
+      "type": "color",
+      "required": false,
+      "label": "Primær farve",
+      "customer_editable": true,
+      "automation": {
+        "action": "select_color",
+        "instruction": "Vælg en professionel farve …"
+      }
+    }
   ],
   "pages": {
     "home": {
       "title": "Forside",
       "slug": "forside",
       "template": "front-page.php",
+      "is_front_page": true,
+      "label": "Forside",
       "fields": [
-        { "key": "hero_heading",          "type": "text",    "required": true,  "label": "Hero overskrift" },
-        { "key": "hero_intro",            "type": "wysiwyg", "required": false, "label": "Introduktionstekst" },
-        { "key": "hero_background_image", "type": "image",   "required": false, "label": "Baggrundsbillede" },
         {
-          "key": "hero_checklist",
-          "type": "repeater",
-          "required": false,
-          "label": "Checkliste",
-          "sub_fields": [
-            { "key": "text", "type": "text", "required": true, "label": "Punkt" }
-          ]
+          "key": "hero_heading",
+          "target": "pages.home.hero_heading",
+          "source": "theme",
+          "type": "text",
+          "required": true,
+          "label": "Hero overskrift",
+          "customer_editable": true,
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Skriv en kort overskrift…",
+            "max_characters": 65,
+            "format": "plain_text"
+          }
         }
       ]
     }
@@ -108,11 +125,32 @@ X-Moneyweb-Key: [api_key]
 { "status": "error", "code": "unauthorized", "message": "Invalid API key" }
 ```
 
-### Response 404
+### Response 404 — manifest mangler
 
 ```json
 { "status": "error", "code": "no_manifest", "message": "Active theme has no moneyweb-theme.json" }
 ```
+
+### Response 422 — ugyldigt manifest
+
+Returneres når theme-manifestet bryder Core-kontrakten (reserveret key, ugyldig `automation.action`, …). Der returneres **ingen partial schema** — n8n må ikke modtage et halvt schema.
+
+```json
+{
+  "status": "error",
+  "code": "invalid_manifest",
+  "message": "Theme manifest is invalid",
+  "errors": [
+    {
+      "code": "reserved_field_key",
+      "field": "company_name",
+      "message": "Theme manifest uses a field key reserved by Moneyweb Core."
+    }
+  ]
+}
+```
+
+Andre `errors[].code`-værdier: `invalid_automation_action`.
 
 ### Response 503
 
@@ -124,7 +162,7 @@ X-Moneyweb-Key: [api_key]
 
 ## POST /site-data
 
-Modtager indhold fra n8n og gemmer via ACF.
+Modtager indhold fra n8n. Strukturen er flat — ingen `core` / `theme` / `features` på top-niveau. Core router internt baseret på `source` fra schema'et.
 
 ### Request
 
@@ -145,7 +183,12 @@ Content-Type: application/json
     "company_phone":   "12 34 56 78",
     "company_email":   "kontakt@hansenvvs.dk",
     "company_address": "Borgergade 12, 2100 København Ø",
-    "logo_primary":    "https://example.com/logo.png"
+    "logo":            "https://example.com/logo.png",
+    "opening_hours": [
+      { "day": "Mandag",  "open": "08:00", "close": "16:00" },
+      { "day": "Lørdag",  "closed": true,  "note": "Efter aftale" }
+    ],
+    "primary_color":   "#1a73e8"
   },
   "pages": {
     "home": {
@@ -154,13 +197,8 @@ Content-Type: application/json
       "hero_background_image": "https://example.com/hero.jpg",
       "hero_checklist": [
         { "text": "Altid fast pris" },
-        { "text": "Hurtig respons" },
-        { "text": "30 års erfaring" }
+        { "text": "Hurtig respons" }
       ]
-    },
-    "about": {
-      "hero_heading":   "Om Hansen VVS",
-      "content_body":   "<p>Vi har hjulpet københavnere siden 1994...</p>"
     }
   }
 }
@@ -174,8 +212,9 @@ Content-Type: application/json
 | `wysiwyg` | string — HTML tilladt |
 | `image` | HTTPS URL — Core downloader, importerer til media library, gemmer attachment-ID |
 | `true_false` | boolean |
-| `repeater` | array af objekter med sub-field-nøgler |
 | `number` | number |
+| `color` | string — `#rgb`, `#rrggbb` eller `#rrggbbaa` |
+| `repeater` | array af objekter med sub-field-nøgler |
 
 ### Response 200
 
@@ -183,8 +222,8 @@ Content-Type: application/json
 {
   "status": "ok",
   "saved": {
-    "global": 5,
-    "pages": { "home": 4, "about": 2 }
+    "global": 6,
+    "pages": { "home": 4 }
   },
   "warnings": [
     {
@@ -206,19 +245,9 @@ Content-Type: application/json
   "status": "error",
   "code": "validation_failed",
   "errors": [
-    {
-      "code": "theme_mismatch",
-      "message": "Payload theme 'moneyweb-handvaerker-01' does not match active theme 'moneyweb-revisor-01'"
-    },
-    {
-      "code": "schema_version_mismatch",
-      "message": "Expected schema_version 2, got 1"
-    },
-    {
-      "code": "required_field_missing",
-      "field": "company_name",
-      "message": "Required field missing"
-    }
+    { "code": "theme_mismatch", "message": "Payload theme '…' does not match active theme '…'" },
+    { "code": "schema_version_mismatch", "message": "Expected schema_version 1, got 2" },
+    { "code": "required_field_missing", "field": "company_name", "scope": "global", "source": "core", "message": "Required field missing" }
   ]
 }
 ```
@@ -229,6 +258,10 @@ Content-Type: application/json
 { "status": "error", "code": "unauthorized", "message": "Invalid API key" }
 ```
 
+### Response 422 — Ugyldigt theme-manifest
+
+Samme respons som `GET /schema` returnerer (hentes via samme `build_combined()`).
+
 ### Response 503
 
 ```json
@@ -237,14 +270,15 @@ Content-Type: application/json
 
 ---
 
-## Valideringsrækkefølge
+## Valideringsrækkefølge (POST)
 
 1. ACF Pro aktiv
 2. API-key
-3. `theme` matcher aktivt Child Theme
-4. `schema_version` matcher manifest
-5. Alle `required: true` felter til stede
-6. Ukendte felter samles i `warnings` og springes over — ingen fejl
+3. Theme-manifest gyldigt (ikke reserved-key collision, gyldige automation actions)
+4. `theme` matcher aktivt Child Theme
+5. `schema_version` matcher manifest (strict)
+6. Alle `required: true` felter (Core + theme) til stede
+7. Ukendte felter samles i `warnings` og springes over — ingen fejl
 
 ---
 
@@ -254,10 +288,14 @@ Keys er deterministiske og stabile — aldrig tilfældigt genereret:
 
 | Scope | Group key | Field key |
 |---|---|---|
-| Global options | `group_mw_global` | `field_mw_global_company_name` |
-| Page: home | `group_mw_home` | `field_mw_home_hero_heading` |
-| Repeater sub-field | — | `field_mw_home_hero_checklist_text` |
+| Core (always-on) | `group_mw_core_global` | `field_mw_core_company_name` |
+| Theme global extras | `group_mw_theme_global` | `field_mw_theme_global_primary_color` |
+| Page | `group_mw_home` | `field_mw_home_hero_heading` |
+| Repeater sub | — | `field_mw_home_hero_checklist_text` |
 
-Format: `field_mw_{page}_{field_key}` for side-felter, `field_mw_global_{field_key}` for globale felter.
+Feltgrupper registreres via `acf_add_local_field_group()` på `acf/init` — ikke `init`.
 
-Feltgrupper registreres via `acf_add_local_field_group()` på `acf/init`-hook — ikke på `init`.
+Site-data writer router globals via det enkelte felts `source`:
+- `source: "core"` → `field_mw_core_{key}` (gemmes på options-page)
+- `source: "theme"` → `field_mw_theme_global_{key}` (gemmes på options-page)
+- Page-felter → `field_mw_{page}_{key}` (gemmes på det enkelte post-ID)

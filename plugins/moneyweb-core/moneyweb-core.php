@@ -25,6 +25,7 @@ define( 'MONEYWEB_CORE_API_KEY_OPTION', 'moneyweb_api_key' );
 define( 'MONEYWEB_CORE_PAGE_META_KEY', '_moneyweb_page_key' );
 
 require_once MONEYWEB_CORE_DIR . 'includes/class-manifest.php';
+require_once MONEYWEB_CORE_DIR . 'includes/class-core-fields.php';
 require_once MONEYWEB_CORE_DIR . 'includes/class-acf-builder.php';
 require_once MONEYWEB_CORE_DIR . 'includes/class-auth.php';
 require_once MONEYWEB_CORE_DIR . 'includes/class-validator.php';
@@ -50,17 +51,55 @@ add_action( 'admin_notices', function () {
 
 /**
  * Register ACF field groups + options page on acf/init.
+ *
+ * Core's field group is registered unconditionally so admins always see the
+ * Moneyweb settings page. The theme's manifest is only translated to ACF if
+ * Moneyweb_Schema::build_combined() considers it valid; on collisions/invalid
+ * manifests we surface an admin notice and leave the API-level 422 to /schema.
  */
 add_action( 'acf/init', function () {
     if ( ! moneyweb_core_acf_active() ) {
         return;
     }
+    Moneyweb_ACF_Builder::register_options_page();
+    Moneyweb_ACF_Builder::register_core_fields();
+
     $manifest = Moneyweb_Manifest::get();
     if ( is_wp_error( $manifest ) ) {
         return;
     }
-    Moneyweb_ACF_Builder::register_options_page();
+    $combined = Moneyweb_Schema::build_combined();
+    if ( is_wp_error( $combined ) ) {
+        return; // manifest invalid — admin notice handles it.
+    }
     Moneyweb_ACF_Builder::register_from_manifest( $manifest );
+} );
+
+/**
+ * Admin notice when the theme manifest is invalid (e.g. uses a reserved Core key).
+ */
+add_action( 'admin_notices', function () {
+    if ( ! moneyweb_core_acf_active() ) {
+        return;
+    }
+    $combined = Moneyweb_Schema::build_combined();
+    if ( ! is_wp_error( $combined ) ) {
+        return;
+    }
+    $data = $combined->get_error_data();
+    if ( ! isset( $data['errors'] ) || ! is_array( $data['errors'] ) ) {
+        return;
+    }
+    $items = '';
+    foreach ( $data['errors'] as $err ) {
+        $items .= sprintf(
+            '<li><code>%s</code>%s — %s</li>',
+            esc_html( isset( $err['code'] ) ? $err['code'] : '' ),
+            isset( $err['field'] ) && $err['field'] !== '' ? ' on <code>' . esc_html( $err['field'] ) . '</code>' : '',
+            esc_html( isset( $err['message'] ) ? $err['message'] : '' )
+        );
+    }
+    echo '<div class="notice notice-error"><p><strong>Moneyweb Core:</strong> Aktivt themes manifest er ugyldigt. <code>moneyweb/v1/schema</code> returnerer 422.</p><ul style="margin-left:18px;list-style:disc;">' . $items . '</ul></div>';
 } );
 
 /**

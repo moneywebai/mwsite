@@ -30,16 +30,19 @@ WordPress Multisite (mwsite.dk / mw1.dk)
 Det eneste plugin i systemet (udover ACF Pro).
 
 **Gør præcis dette:**
-1. Finder og læser aktivt Child Theme's `moneyweb-theme.json`
-2. Registrerer de ACF-felter manifestet kræver
-3. Tilbyder `GET /wp-json/moneyweb/v1/schema`
-4. Tilbyder `POST /wp-json/moneyweb/v1/site-data`
-5. Validerer den modtagne JSON mod manifestet
-6. Gemmer feltværdier via ACF
+1. Definerer en fast liste af Core-felter (se `core-fields.md`) — sandhedskilde for fælles globale felter
+2. Finder og læser aktivt Child Theme's `moneyweb-theme.json` (theme-specifikke felter)
+3. Validerer at theme-manifestet ikke kolliderer med Core (reserved keys)
+4. Registrerer ACF-feltgrupper: `group_mw_core_global` + `group_mw_theme_global` + `group_mw_{page}`
+5. Tilbyder `GET /wp-json/moneyweb/v1/schema` — kombineret schema med `source`/`target`/`automation` på hvert felt
+6. Tilbyder `POST /wp-json/moneyweb/v1/site-data` — flat payload, router internt via `source`
+7. Validerer den modtagne JSON mod det kombinerede schema
+8. Gemmer feltværdier via ACF
 
 **Gør ikke:**
 - Registrerer ikke CPT'er (ingen CPT'er i fase 1)
 - Indeholder ikke bookinglogik, kundepanel eller andre features
+- Udfører ikke automation-handlinger — den beskriver kun behovet i `automation` på hvert felt
 - Indeholder ikke avanceret HMAC — simpel API-key er tilstrækkeligt nu
 
 ### moneyweb-base
@@ -125,14 +128,26 @@ moneyweb-wp/
 │   ├── architecture.md          (denne fil)
 │   ├── api-contract.md
 │   ├── theme-manifest.md
-│   ├── phase-1.md
+│   ├── core-fields.md           (fase 1.1)
+│   ├── phase-1.md               (historisk)
+│   ├── phase-1.1.md             (aktuel)
 │   └── legacy/
 │       └── acf-export-2026-06-21.json
 ├── plugins/
 │   └── moneyweb-core/
+│       ├── moneyweb-core.php
+│       └── includes/
+│           ├── class-core-fields.php   (Core-fields sandhedskilde)
+│           ├── class-manifest.php
+│           ├── class-acf-builder.php
+│           ├── class-auth.php
+│           ├── class-schema.php        (build_combined + REST)
+│           ├── class-validator.php
+│           └── class-site-data.php
 └── themes/
     ├── moneyweb-base/
-    └── moneyweb-handvaerker-01/  (fase 2)
+    ├── moneyweb-test-01/        (testtheme — fase 1/1.1)
+    └── moneyweb-handvaerker-01/ (fase 2)
 ```
 
 ---

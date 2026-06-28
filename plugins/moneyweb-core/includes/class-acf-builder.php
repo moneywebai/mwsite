@@ -1,11 +1,12 @@
 <?php
 /**
- * Registers ACF field groups + options page from the manifest.
+ * Registers ACF field groups + options page from Core and from the manifest.
  *
  * Field keys are deterministic:
- *   group_mw_global, group_mw_{page}
- *   field_mw_global_{key}, field_mw_{page}_{key}
- *   field_mw_{page}_{repeater}_{sub_key}
+ *   group_mw_core_global,         field_mw_core_{key}                         (Core, always-on)
+ *   group_mw_theme_global,        field_mw_theme_global_{key}                 (theme global extras)
+ *   group_mw_{page},              field_mw_{page}_{key}                       (theme page fields)
+ *   (repeater sub-fields)         field_mw_{scope}_{key}_{sub_key}
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -29,6 +30,44 @@ class Moneyweb_ACF_Builder {
     }
 
     /**
+     * Registers Core's always-on global field group on the options page.
+     * Field keys are prefixed `field_mw_core_`.
+     */
+    public static function register_core_fields() {
+        if ( ! function_exists( 'acf_add_local_field_group' ) ) {
+            return;
+        }
+        $core_fields = Moneyweb_Core_Fields::get_fields();
+        if ( empty( $core_fields ) ) {
+            return;
+        }
+        acf_add_local_field_group( [
+            'key'             => 'group_mw_core_global',
+            'title'           => 'Moneyweb — Kernefelter',
+            'fields'          => self::build_fields( $core_fields, 'core', 'field_mw_core_' ),
+            'location'        => [
+                [
+                    [
+                        'param'    => 'options_page',
+                        'operator' => '==',
+                        'value'    => MONEYWEB_CORE_OPTIONS_PAGE,
+                    ],
+                ],
+            ],
+            'menu_order'      => 0,
+            'position'        => 'normal',
+            'style'           => 'default',
+            'label_placement' => 'top',
+            'active'          => true,
+        ] );
+    }
+
+    /**
+     * Registers theme-specific global fields + per-page field groups from the manifest.
+     *
+     * Caller must have already verified that the manifest does not collide with
+     * Core's reserved keys.
+     *
      * @param array $manifest
      */
     public static function register_from_manifest( $manifest ) {
@@ -36,13 +75,13 @@ class Moneyweb_ACF_Builder {
             return;
         }
 
-        // Global options field group.
-        if ( ! empty( $manifest['global'] ) ) {
+        // Theme global extras (not Core).
+        if ( ! empty( $manifest['global'] ) && is_array( $manifest['global'] ) ) {
             $group = [
-                'key'      => 'group_mw_global',
-                'title'    => 'Moneyweb — Globale felter',
-                'fields'   => self::build_fields( $manifest['global'], 'global' ),
-                'location' => [
+                'key'             => 'group_mw_theme_global',
+                'title'           => 'Moneyweb — Theme-felter',
+                'fields'          => self::build_fields( $manifest['global'], 'theme_global', 'field_mw_theme_global_' ),
+                'location'        => [
                     [
                         [
                             'param'    => 'options_page',
@@ -51,13 +90,15 @@ class Moneyweb_ACF_Builder {
                         ],
                     ],
                 ],
-                'menu_order'      => 0,
+                'menu_order'      => 10,
                 'position'        => 'normal',
                 'style'           => 'default',
                 'label_placement' => 'top',
                 'active'          => true,
             ];
-            acf_add_local_field_group( $group );
+            if ( ! empty( $group['fields'] ) ) {
+                acf_add_local_field_group( $group );
+            }
         }
 
         // Per-page field groups.
@@ -67,15 +108,15 @@ class Moneyweb_ACF_Builder {
                     continue;
                 }
                 $safe_page_key = self::sanitize_key( $page_key );
-
-                $location = self::build_page_location( $page );
+                $prefix        = 'field_mw_' . $safe_page_key . '_';
+                $location      = self::build_page_location( $page );
 
                 $group = [
-                    'key'      => 'group_mw_' . $safe_page_key,
-                    'title'    => 'Moneyweb — ' . ( isset( $page['label'] ) ? $page['label'] : ucfirst( $page_key ) ),
-                    'fields'   => self::build_fields( $page['fields'], $safe_page_key ),
-                    'location' => $location,
-                    'menu_order'      => 0,
+                    'key'             => 'group_mw_' . $safe_page_key,
+                    'title'           => 'Moneyweb — ' . ( isset( $page['label'] ) ? $page['label'] : ucfirst( $page_key ) ),
+                    'fields'          => self::build_fields( $page['fields'], $safe_page_key, $prefix ),
+                    'location'        => $location,
+                    'menu_order'      => 20,
                     'position'        => 'normal',
                     'style'           => 'default',
                     'label_placement' => 'top',
@@ -112,14 +153,14 @@ class Moneyweb_ACF_Builder {
 
     /**
      * @param array  $fields
-     * @param string $scope_key  'global' or sanitized page key
+     * @param string $scope_key   'core', 'theme_global', or sanitized page key
+     * @param string $key_prefix  full ACF field-key prefix used at this scope
      */
-    private static function build_fields( $fields, $scope_key ) {
+    private static function build_fields( $fields, $scope_key, $key_prefix ) {
         $out = [];
         if ( ! is_array( $fields ) ) {
             return $out;
         }
-        $key_prefix = 'field_mw_' . $scope_key . '_';
         foreach ( $fields as $f ) {
             if ( ! is_array( $f ) || empty( $f['key'] ) || empty( $f['type'] ) ) {
                 continue;
@@ -174,6 +215,12 @@ class Moneyweb_ACF_Builder {
 
             case 'number':
                 return $common + [ 'type' => 'number' ];
+
+            case 'color':
+                return $common + [
+                    'type'          => 'color_picker',
+                    'return_format' => 'string',
+                ];
 
             case 'repeater':
                 $sub_prefix = $field_key . '_';

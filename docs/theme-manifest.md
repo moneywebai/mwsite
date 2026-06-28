@@ -1,7 +1,9 @@
 # Theme Manifest — moneyweb-theme.json
 
-Hvert Child Theme skal have en `moneyweb-theme.json` i teme-roden.
-Dette er kontrakten mellem Child Theme og moneyweb-core.
+Hvert Child Theme skal have en `moneyweb-theme.json` i theme-roden.
+Det er kontrakten mellem Child Theme og moneyweb-core.
+
+**Vigtigt:** Manifestet beskriver KUN theme-specifikke felter. De fælles felter (kontaktinfo, logo, sociale links, åbningstider, …) ejes af Moneyweb Core — se [`core-fields.md`](core-fields.md). Et theme må ikke duplikere eller definere noget med en Core-key.
 
 ---
 
@@ -12,7 +14,7 @@ moneyweb-handvaerker-01/
 ├── moneyweb-theme.json
 ├── style.css
 ├── functions.php
-└── ...
+└── …
 ```
 
 ---
@@ -25,13 +27,17 @@ moneyweb-handvaerker-01/
   "theme_version": "1.0.0",
   "schema_version": 1,
   "global": [
-    { "key": "company_name",    "type": "text",  "required": true,  "label": "Virksomhedsnavn" },
-    { "key": "company_phone",   "type": "text",  "required": true,  "label": "Telefon" },
-    { "key": "company_email",   "type": "text",  "required": true,  "label": "E-mail" },
-    { "key": "company_address", "type": "text",  "required": false, "label": "Adresse" },
-    { "key": "logo_primary",    "type": "image", "required": false, "label": "Logo" },
-    { "key": "facebook_url",    "type": "text",  "required": false, "label": "Facebook URL" },
-    { "key": "instagram_url",   "type": "text",  "required": false, "label": "Instagram URL" }
+    {
+      "key": "primary_color",
+      "type": "color",
+      "required": true,
+      "label": "Primær farve",
+      "customer_editable": true,
+      "automation": {
+        "action": "select_color",
+        "instruction": "Vælg en professionel farve, der passer til virksomhedens logo og branche."
+      }
+    }
   ],
   "pages": {
     "home": {
@@ -41,44 +47,34 @@ moneyweb-handvaerker-01/
       "is_front_page": true,
       "label": "Forside",
       "fields": [
-        { "key": "hero_heading",          "type": "text",    "required": true,  "label": "Hero overskrift" },
-        { "key": "hero_intro",            "type": "wysiwyg", "required": false, "label": "Hero introduktionstekst" },
-        { "key": "hero_background_image", "type": "image",   "required": false, "label": "Hero baggrundsbillede" },
         {
-          "key": "hero_checklist",
-          "type": "repeater",
-          "required": false,
-          "label": "Hero checkliste",
-          "sub_fields": [
-            { "key": "text", "type": "text", "required": true, "label": "Punkt" }
-          ]
+          "key": "hero_heading",
+          "type": "text",
+          "required": true,
+          "label": "Hero overskrift",
+          "customer_editable": true,
+          "automation": {
+            "action": "generate_text",
+            "instruction": "Skriv en kort overskrift om virksomhedens vigtigste fordel.",
+            "max_characters": 65,
+            "format": "plain_text"
+          }
         },
-        { "key": "about_heading", "type": "text",    "required": false, "label": "Om os overskrift" },
-        { "key": "about_text",    "type": "wysiwyg", "required": false, "label": "Om os tekst" },
-        { "key": "about_image",   "type": "image",   "required": false, "label": "Om os billede" }
-      ]
-    },
-    "about": {
-      "title": "Om os",
-      "slug": "om-os",
-      "template": "page-about.php",
-      "label": "Om os",
-      "fields": [
-        { "key": "hero_heading",          "type": "text",    "required": true,  "label": "Overskrift" },
-        { "key": "hero_background_image", "type": "image",   "required": false, "label": "Baggrundsbillede" },
-        { "key": "content_heading",       "type": "text",    "required": false, "label": "Indhold overskrift" },
-        { "key": "content_body",          "type": "wysiwyg", "required": false, "label": "Indhold tekst" }
-      ]
-    },
-    "contact": {
-      "title": "Kontakt",
-      "slug": "kontakt",
-      "template": "page-contact.php",
-      "label": "Kontakt",
-      "fields": [
-        { "key": "heading",          "type": "text",    "required": true,  "label": "Overskrift" },
-        { "key": "text",             "type": "wysiwyg", "required": false, "label": "Tekst" },
-        { "key": "background_image", "type": "image",   "required": false, "label": "Baggrundsbillede" }
+        {
+          "key": "hero_background_image",
+          "type": "image",
+          "required": true,
+          "label": "Hero-billede",
+          "customer_editable": true,
+          "automation": {
+            "action": "find_or_generate_image",
+            "instruction": "Et realistisk billede af virksomhedens primære arbejde. Ingen tekst eller vandmærker.",
+            "orientation": "landscape",
+            "minimum_width": 1600,
+            "minimum_height": 900,
+            "avoid": ["tekst i billedet", "vandmærker", "tydeligt kunstigt AI-look"]
+          }
+        }
       ]
     }
   }
@@ -95,8 +91,57 @@ moneyweb-handvaerker-01/
 | `wysiwyg` | Formateret tekst (HTML) |
 | `image` | Billede — sendes som HTTPS URL, Core importerer til media library og gemmer attachment-ID |
 | `true_false` | Boolean toggle |
-| `repeater` | Liste af elementer — kræver `sub_fields` |
 | `number` | Tal |
+| `color` | Farve — gemmes som `#rrggbb` / `#rrggbbaa` (ACF `color_picker`) |
+| `repeater` | Liste af elementer — kræver `sub_fields` |
+
+---
+
+## Metadata pr. felt
+
+| Felt | Krævet | Beskrivelse |
+|---|---|---|
+| `key` | ✓ | Unik nøgle inden for samme scope, må ikke kollidere med Core |
+| `type` | ✓ | Se felttyper |
+| `label` | | Vises som ACF-feltlabel og i Moneyweb-kontrolpanel |
+| `required` | | `true` / `false` (default false) |
+| `customer_editable` | | Bool — om feltet vises i kundens fremtidige kontrolpanel |
+| `description` | | Kort hjælpetekst (vises som hjælpetekst i admin senere) |
+| `default` | | Default-værdi der bruges hvis automation er `use_default` |
+| `automation` | | Objekt — se nedenfor |
+| `sub_fields` | (kun repeater) | Liste af felter med samme format |
+
+Metadata `customer_editable`, `description`, `default` og `automation` passerer uændret gennem `/schema` til n8n.
+
+---
+
+## Automation
+
+Hvert felt kan have et `automation`-objekt der fortæller n8n hvad den skal gøre for at producere værdien. Core udfører ikke handlingen — Core beskriver kun behovet.
+
+```json
+"automation": {
+  "action": "generate_text",
+  "instruction": "…",
+  "max_characters": 65,
+  "format": "plain_text"
+}
+```
+
+### Tilladte `action`-værdier
+
+| Action | Når den bruges | Typiske ekstra felter |
+|---|---|---|
+| `copy_from_onboarding` | Værdi findes i onboardingdata | `onboarding_key` |
+| `generate_text` | Tekst der skal AI-genereres | `instruction`, `max_characters`, `format` (plain_text\|html), `tone` |
+| `find_image` | Brug eksisterende billedbibliotek/stock | `instruction`, `orientation`, `minimum_width`, `minimum_height`, `avoid` |
+| `generate_image` | Generér via image-AI | samme som `find_image` |
+| `find_or_generate_image` | Find først, generér som fallback | samme som `find_image` |
+| `select_color` | Vælg farve programmatisk | `instruction` |
+| `use_default` | Brug `default`-værdi direkte | (læs `default` på feltet) |
+| `manual` | Kræver manuelt input — n8n skal ikke fylde feltet | — |
+
+Ugyldig `automation.action` får `/schema` til at returnere HTTP 422 `invalid_automation_action`.
 
 ---
 
@@ -106,8 +151,9 @@ moneyweb-handvaerker-01/
 2. Alle feltnøgler (`key`) må kun indeholde bogstaver, tal og underscore
 3. Feltnøgler skal være unikke inden for samme page
 4. Hver side skal have `title`, `slug` og `template`
-5. `global`-felter gemmes på ACF Options Page — ikke på en specifik WordPress-side
-6. `schema_version` øges kun ved breaking changes
+5. `global`-felter gemmes på ACF Options Page (theme-only — Core-globals hører ikke hjemme her)
+6. Et felt må ikke have en `key` der findes i Core's reserverede liste (`company_name`, `company_phone`, `company_email`, `company_address`, `company_cvr`, `logo`, `facebook_url`, `instagram_url`, `linkedin_url`, `opening_hours`, `maps_url`)
+7. `schema_version` øges kun ved breaking changes
 
 ---
 
@@ -121,49 +167,31 @@ moneyweb-handvaerker-01/
 | Omdøb et felt | +1 |
 | Ændr felttype | +1 |
 
+Strict match håndhæves: payload's `schema_version` skal være lig med manifestets.
+
 ---
 
 ## Hvad moneyweb-core gør med manifestet
 
 **Sider:**
-Core finder eller opretter WordPress-sider baseret på `title`, `slug` og `template`:
-1. Søg efter side med meta `_moneyweb_page_key = [page_key]`
+1. Søg efter side med post meta `_moneyweb_page_key = [page_key]`
 2. Ellers søg efter side med `post_name = [slug]`
-3. Ellers opret siden med `title` og `slug`
+3. Ellers opret med `title` og `slug` (status `publish`)
 4. Gem `_moneyweb_page_key` som post meta
 
 **Template-håndtering:**
-- For almindelige sider (ikke front page) sættes `_wp_page_template = [template]`
-- For sider med `"is_front_page": true` sættes IKKE `_wp_page_template`. I stedet sættes:
-  ```php
-  update_option('show_on_front', 'page');
-  update_option('page_on_front', $page_id);
-  ```
-  WordPress vælger automatisk `front-page.php` fra det aktive theme.
+- For sider med `is_front_page: true` sættes `show_on_front=page` + `page_on_front=[id]` — ikke `_wp_page_template`
+- Andre sider får `_wp_page_template = [template]`
 
-**ACF location-regler:**
-
-| Scope | ACF location |
-|---|---|
-| Globale felter | `options_page == moneyweb-settings` |
-| Home (front page) | `page_type == front_page` |
-| Andre sider | `page_template == [template-filnavn]` |
-
-Eksempler: `page_template == page-about.php`, `page_template == page-contact.php`
-
-**ACF-feltgrupper:**
-Core registrerer feltgrupper med deterministiske, stabile keys:
+**ACF feltgrupper:**
 
 | Scope | Group key | Field key eksempel |
 |---|---|---|
-| Global | `group_mw_global` | `field_mw_global_company_name` |
-| Home | `group_mw_home` | `field_mw_home_hero_heading` |
-| Repeater sub-field | — | `field_mw_home_hero_checklist_text` |
-
-Format: `field_mw_{page}_{field_key}` — aldrig tilfældigt genereret.
+| Theme global extras | `group_mw_theme_global` | `field_mw_theme_global_primary_color` |
+| Per page | `group_mw_{page}` | `field_mw_home_hero_heading` |
+| Repeater sub | — | `field_mw_home_hero_checklist_text` |
 
 **Image-felter:**
-Registreres med `return_format: id`. Core downloader billed-URL, importerer til media library og gemmer attachment-ID via `update_field()`.
-
-**Globale felter:**
-Gemmes med `update_field($field_key, $value, 'option')` på ACF Options Page med slug `moneyweb-settings`.
+- Registreres med `return_format: id`
+- Core downloader URL og importerer til media library
+- Gemmer attachment-ID via `update_field()`

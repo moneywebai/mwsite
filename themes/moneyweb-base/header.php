@@ -24,7 +24,7 @@ if ( ! defined( 'ABSPATH' ) ) {
         <p class="mw-site-header__brand">
             <a href="<?php echo esc_url( home_url( '/' ) ); ?>" rel="home">
                 <?php
-                $logo_id = function_exists( 'get_field' ) ? get_field( 'logo_primary', 'option' ) : 0;
+                $logo_id = function_exists( 'get_field' ) ? get_field( 'logo', 'option' ) : 0;
                 if ( $logo_id ) {
                     $logo = wp_get_attachment_image( (int) $logo_id, 'medium', false, [
                         'class' => 'mw-site-header__logo',
