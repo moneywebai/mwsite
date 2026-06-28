@@ -246,16 +246,21 @@ class Moneyweb_Site_Data {
                 if ( ! is_string( $value ) || '' === trim( $value ) ) {
                     return 'failed';
                 }
-                $att = self::sideload_image( $value );
-                if ( is_wp_error( $att ) ) {
+                $current_attachment = '' !== $field_name ? (int) get_field( $field_name, $target ) : 0;
+                $res = self::resolve_image_attachment( $value, $current_attachment );
+                if ( is_wp_error( $res ) ) {
                     $warnings[] = [
                         'code'    => 'image_sideload_failed',
                         'field'   => isset( $field_def['key'] ) ? $field_def['key'] : '',
-                        'message' => $att->get_error_message(),
+                        'message' => $res->get_error_message(),
                     ];
                     return 'failed';
                 }
-                $new = (int) $att;
+                $new = (int) $res;
+                // Fast path: same attachment ID as currently stored → unchanged.
+                if ( $current_attachment > 0 && $current_attachment === $new ) {
+                    return 'unchanged';
+                }
                 break;
             case 'repeater':
                 if ( ! is_array( $value ) ) {
@@ -298,10 +303,20 @@ class Moneyweb_Site_Data {
                 return 'failed';
         }
 
-        // Step 2: pre-check unchanged for cheap scalar types.
-        if ( '' !== $field_name && ! in_array( $type, [ 'image', 'repeater' ], true ) ) {
+        // Step 2: pre-check unchanged.
+        // Image already used resolve_image_attachment() above (fast-path returned 'unchanged').
+        // For scalars, repeater and image-as-id, compare current vs intended before writing.
+        if ( '' !== $field_name && 'image' !== $type ) {
             $current = get_field( $field_name, $target );
-            if ( self::scalar_equivalent( $current, $new, $type ) ) {
+            if ( 'repeater' === $type ) {
+                $sub_defs_list = isset( $field_def['sub_fields'] ) && is_array( $field_def['sub_fields'] )
+                    ? $field_def['sub_fields']
+                    : [];
+                $sub_prefix = $field_key . '_';
+                if ( self::repeater_equivalent( $current, $new, $sub_defs_list, $sub_prefix ) ) {
+                    return 'unchanged';
+                }
+            } elseif ( self::values_equivalent_typed( $current, $new, $type ) ) {
                 return 'unchanged';
             }
         }
@@ -325,37 +340,24 @@ class Moneyweb_Site_Data {
             return 'failed';
         }
 
+        // Pre-check above already established that current ≠ intended,
+        // so if after equals intended now, the write succeeded — even when
+        // update_field() returned false (ACF return-value quirks).
         if ( 'repeater' === $type ) {
-            $intended = count( $new );
-            $got      = is_array( $after ) ? count( $after ) : 0;
-            if ( 0 === $intended && 0 === $got ) {
-                return 'unchanged';
-            }
-            if ( $intended > 0 && $got === $intended ) {
-                return 'unchanged';
+            $sub_defs_list = isset( $field_def['sub_fields'] ) && is_array( $field_def['sub_fields'] )
+                ? $field_def['sub_fields']
+                : [];
+            $sub_prefix = $field_key . '_';
+            if ( self::repeater_equivalent( $after, $new, $sub_defs_list, $sub_prefix ) ) {
+                return 'updated';
             }
             return 'failed';
         }
 
-        if ( self::scalar_equivalent( $after, $new, $type ) ) {
+        if ( self::values_equivalent_typed( $after, $new, $type ) ) {
             return 'updated';
         }
         return 'failed';
-    }
-
-    private static function scalar_equivalent( $a, $b, $type ) {
-        if ( 'number' === $type ) {
-            return (float) $a === (float) $b;
-        }
-        if ( 'true_false' === $type ) {
-            return (bool) $a === (bool) $b;
-        }
-        // text and wysiwyg: ACF may append a trailing newline to wysiwyg on storage,
-        // so compare after rtrim of whitespace on both sides.
-        if ( 'text' === $type || 'wysiwyg' === $type ) {
-            return rtrim( (string) $a ) === rtrim( (string) $b );
-        }
-        return (string) $a === (string) $b;
     }
 
     private static function clean_sub_value( $value, $sub_def, &$warnings ) {
@@ -375,7 +377,7 @@ class Moneyweb_Site_Data {
                 if ( ! is_string( $value ) || '' === trim( $value ) ) {
                     return 0;
                 }
-                $id = self::sideload_image( $value );
+                $id = self::resolve_image_attachment( $value, 0 );
                 if ( is_wp_error( $id ) ) {
                     $warnings[] = [
                         'code'    => 'image_sideload_failed',
@@ -405,13 +407,68 @@ class Moneyweb_Site_Data {
     }
 
     /**
-     * Sideload an image URL to media library, return attachment ID.
+     * Idempotent image resolver.
+     *
+     * Returns the attachment ID that should represent $url. Does not download
+     * if the URL is already represented by an existing attachment on this
+     * subsite. Newly-downloaded attachments get `_moneyweb_source_url` post-meta.
+     *
+     * @param string $url             Image URL from payload.
+     * @param int    $current_attachment_id  Currently stored attachment in the field, or 0.
+     * @return int|WP_Error Attachment ID.
      */
-    private static function sideload_image( $url ) {
-        $url = esc_url_raw( trim( $url ) );
+    private static function resolve_image_attachment( $url, $current_attachment_id = 0 ) {
+        $url = esc_url_raw( trim( (string) $url ) );
         if ( '' === $url ) {
             return new WP_Error( 'invalid_url', 'Empty or invalid image URL' );
         }
+
+        // 1. Current attachment already represents this URL?
+        if ( $current_attachment_id > 0 ) {
+            $existing = (string) get_post_meta( $current_attachment_id, '_moneyweb_source_url', true );
+            if ( $existing === $url && get_post_status( $current_attachment_id ) ) {
+                return $current_attachment_id;
+            }
+        }
+
+        // 2. Any other attachment on this subsite with the same source URL?
+        $reusable = self::find_attachment_by_source_url( $url );
+        if ( $reusable > 0 ) {
+            return $reusable;
+        }
+
+        // 3. Sideload and tag.
+        $new_id = self::sideload_image_raw( $url );
+        if ( is_wp_error( $new_id ) ) {
+            return $new_id;
+        }
+        update_post_meta( $new_id, '_moneyweb_source_url', $url );
+        return $new_id;
+    }
+
+    private static function find_attachment_by_source_url( $url ) {
+        $q = new WP_Query( [
+            'post_type'              => 'attachment',
+            'post_status'            => 'inherit',
+            'posts_per_page'         => 1,
+            'no_found_rows'          => true,
+            'update_post_term_cache' => false,
+            'fields'                 => 'ids',
+            'meta_query'             => [
+                [
+                    'key'   => '_moneyweb_source_url',
+                    'value' => $url,
+                ],
+            ],
+        ] );
+        return ! empty( $q->posts ) ? (int) $q->posts[0] : 0;
+    }
+
+    /**
+     * Raw sideload — always downloads. Use resolve_image_attachment() for
+     * idempotent behavior.
+     */
+    private static function sideload_image_raw( $url ) {
         if ( ! function_exists( 'media_sideload_image' ) ) {
             require_once ABSPATH . 'wp-admin/includes/media.php';
             require_once ABSPATH . 'wp-admin/includes/file.php';
@@ -422,5 +479,76 @@ class Moneyweb_Site_Data {
             return $attachment_id;
         }
         return (int) $attachment_id;
+    }
+
+    /**
+     * Content-aware repeater comparison.
+     *
+     * $intended_rows is the internal form used for update_field(): each row's
+     * keys are full ACF field keys (e.g. `field_mw_core_opening_hours_day`).
+     * $current_rows is what get_field() returns: rows keyed by sub-field NAME
+     * (e.g. `day`). We map between the two via the sub_def list.
+     *
+     * Returns true iff every row matches in count, sub-fields, and per-type
+     * normalized values.
+     */
+    private static function repeater_equivalent( $current_rows, $intended_rows, $sub_defs_list, $sub_field_key_prefix ) {
+        if ( ! is_array( $current_rows ) ) {
+            $current_rows = [];
+        }
+        if ( ! is_array( $intended_rows ) ) {
+            return false;
+        }
+        if ( count( $current_rows ) !== count( $intended_rows ) ) {
+            return false;
+        }
+        if ( count( $intended_rows ) === 0 ) {
+            return true;
+        }
+
+        $i = 0;
+        foreach ( $intended_rows as $intended ) {
+            $current = isset( $current_rows[ $i ] ) ? $current_rows[ $i ] : null;
+            if ( ! is_array( $current ) || ! is_array( $intended ) ) {
+                return false;
+            }
+            foreach ( $sub_defs_list as $sub_def ) {
+                if ( empty( $sub_def['key'] ) ) {
+                    continue;
+                }
+                $name           = (string) $sub_def['key'];
+                $sanitized_name = Moneyweb_ACF_Builder::sanitize_key( $name );
+                $intended_key   = $sub_field_key_prefix . $sanitized_name;
+                $type           = isset( $sub_def['type'] ) ? (string) $sub_def['type'] : 'text';
+
+                $cur_val = array_key_exists( $name, $current ) ? $current[ $name ] : null;
+                $int_val = array_key_exists( $intended_key, $intended ) ? $intended[ $intended_key ] : null;
+
+                if ( ! self::values_equivalent_typed( $cur_val, $int_val, $type ) ) {
+                    return false;
+                }
+            }
+            $i++;
+        }
+        return true;
+    }
+
+    /**
+     * Type-aware value comparison used for both scalars and repeater sub-fields.
+     */
+    private static function values_equivalent_typed( $a, $b, $type ) {
+        if ( 'number' === $type ) {
+            return (float) $a === (float) $b;
+        }
+        if ( 'true_false' === $type ) {
+            return (bool) $a === (bool) $b;
+        }
+        if ( 'image' === $type ) {
+            return (int) $a === (int) $b;
+        }
+        if ( 'text' === $type || 'wysiwyg' === $type ) {
+            return rtrim( (string) $a ) === rtrim( (string) $b );
+        }
+        return (string) $a === (string) $b;
     }
 }

@@ -260,7 +260,9 @@ Felter pr. scope tælles separat:
 
 `warnings` er altid til stede i responsen — tom array hvis ingen advarsler. Et fejlende felt bliver IKKE til en top-level fejl; det fanges i `result.*.failed` og evt. en warning.
 
-**Idempotency:** Den samme payload kan genkøres trygt — andet kald returnerer typisk `unchanged` for alle felter, og opretter ingen dubletter af sider.
+**Idempotency:** Den samme payload kan genkøres trygt — andet kald returnerer `unchanged` for alle felter (verificeret incl. text, wysiwyg, color, repeater og image), og opretter ingen dubletter af sider eller attachments.
+
+For image-felter gemmer Core kilde-URL'en som post-meta `_moneyweb_source_url` på attachment ved oprettelse. Genkør med samme URL → eksisterende attachment genbruges, intet downloades, intet attachment oprettes. Repeater-felter sammenlignes pr. sub-felt-indhold (ikke kun rækkeantal) før de overskrives.
 
 ### Response 400 — Valideringsfejl
 
